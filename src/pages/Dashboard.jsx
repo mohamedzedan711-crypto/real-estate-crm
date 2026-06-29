@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Users, TrendingUp, AlertTriangle, CheckCircle, Zap, Target, Award } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useLang } from '../contexts/LanguageContext'
@@ -13,12 +13,34 @@ import LeadDetail from '../components/leads/LeadDetail'
 
 const COLORS = ['#3b82f6','#8b5cf6','#f59e0b','#f97316','#10b981','#ef4444']
 
+const STATUSES_KEYS = ['new','contacted','interested','negotiating','closed_won','closed_lost']
+const SOURCES_KEYS  = ['olx_dubizzle','aqarmap','meta','whatsapp','manual']
+
 export default function Dashboard() {
   const { t } = useLang()
   const { profile, loading: authLoading } = useAuth()
-  const [stats, setStats]     = useState(null)
-  const [loading, setLoading] = useState(true)
+  // Raw leads stored separately so chart labels can re-translate without re-fetching
+  const [rawLeads, setRawLeads] = useState([])
+  const [stats, setStats]       = useState(null)
+  const [loading, setLoading]   = useState(true)
   const [viewLead, setViewLead] = useState(null)
+
+  // These derive their .name values from t() so they update instantly when lang changes,
+  // without needing to re-fetch from Supabase.
+  const statusData = useMemo(() =>
+    STATUSES_KEYS.map((s, i) => ({
+      name:  t(`statuses.${s}`),
+      value: rawLeads.filter(l => l.status === s).length,
+      color: COLORS[i],
+    })).filter(d => d.value > 0),
+  [rawLeads, t])
+
+  const sourceData = useMemo(() =>
+    SOURCES_KEYS.map(s => ({
+      name:  t(`sources.${s}`),
+      value: rawLeads.filter(l => l.source === s).length,
+    })).filter(d => d.value > 0),
+  [rawLeads, t])
 
   useEffect(() => {
     // Wait until auth context has resolved before fetching data.
@@ -44,11 +66,8 @@ export default function Dashboard() {
         if (leadsError) {
           console.error('Dashboard leads error:', leadsError.message)
           // Render empty stats so the page is visible even if DB isn't set up yet
-          setStats({
-            total: 0, newToday: 0, newWeek: 0, newMonth: 0,
-            closedWon: 0, dead: 0, convRate: 0,
-            statusData: [], sourceData: [], recent: [], hot: [], agentPerf: [],
-          })
+          setRawLeads([])
+          setStats({ total: 0, newToday: 0, newWeek: 0, newMonth: 0, closedWon: 0, dead: 0, convRate: 0, recent: [], hot: [], agentPerf: [] })
           setLoading(false)
           return
         }
@@ -61,19 +80,6 @@ export default function Dashboard() {
         const closedWon = safeLeads.filter(l => l.status === 'closed_won').length
         const dead      = safeLeads.filter(l => l.is_dead).length
         const convRate  = total ? Math.round((closedWon / total) * 100) : 0
-
-        const STATUSES = ['new','contacted','interested','negotiating','closed_won','closed_lost']
-        const statusData = STATUSES.map((s, i) => ({
-          name: t(`statuses.${s}`),
-          value: safeLeads.filter(l => l.status === s).length,
-          color: COLORS[i],
-        })).filter(d => d.value > 0)
-
-        const SOURCES = ['olx_dubizzle','aqarmap','meta','whatsapp','manual']
-        const sourceData = SOURCES.map(s => ({
-          name: t(`sources.${s}`),
-          value: safeLeads.filter(l => l.source === s).length,
-        })).filter(d => d.value > 0)
 
         const recent = [...safeLeads]
           .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
@@ -98,14 +104,13 @@ export default function Dashboard() {
           })).sort((a, b) => b.won - a.won).slice(0, 5)
         }
 
-        setStats({ total, newToday, newWeek, newMonth, closedWon, dead, convRate, statusData, sourceData, recent, hot, agentPerf })
+        // Store raw leads for the chart useMemos, stats for everything else
+        setRawLeads(safeLeads)
+        setStats({ total, newToday, newWeek, newMonth, closedWon, dead, convRate, recent, hot, agentPerf })
       } catch (err) {
         console.error('Dashboard load error:', err)
-        setStats({
-          total: 0, newToday: 0, newWeek: 0, newMonth: 0,
-          closedWon: 0, dead: 0, convRate: 0,
-          statusData: [], sourceData: [], recent: [], hot: [], agentPerf: [],
-        })
+        setRawLeads([])
+        setStats({ total: 0, newToday: 0, newWeek: 0, newMonth: 0, closedWon: 0, dead: 0, convRate: 0, recent: [], hot: [], agentPerf: [] })
       } finally {
         setLoading(false)
       }
@@ -144,8 +149,8 @@ export default function Dashboard() {
           <h3 className="text-sm font-semibold text-gray-700 dark:text-navy-200 mb-4">{t('dashboard.leadsByStatus')}</h3>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
-              <Pie data={stats.statusData} cx="50%" cy="50%" outerRadius={70} dataKey="value">
-                {stats.statusData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+              <Pie data={statusData} cx="50%" cy="50%" outerRadius={70} dataKey="value">
+                {statusData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
               </Pie>
               <Tooltip />
               <Legend iconSize={10} iconType="circle" wrapperStyle={{ fontSize: 11 }} />
@@ -157,7 +162,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-700 dark:text-navy-200 mb-4">{t('dashboard.leadsBySource')}</h3>
           <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={stats.sourceData} barSize={22}>
+            <BarChart data={sourceData} barSize={22}>
               <XAxis dataKey="name" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 10 }} />
               <Tooltip />
