@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Key, Clock, MessageSquare, Calendar, Users, Eye, EyeOff, Save, TestTube, Plus, Edit2, UserX, UserCheck } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Key, Clock, MessageSquare, Calendar, Users, Eye, EyeOff, Save, Plus, Trash2, UserX, UserCheck, AlertTriangle } from 'lucide-react'
 import { useSettings } from '../hooks/useSettings'
 import { useLang } from '../contexts/LanguageContext'
 import { supabase, invokeFunction } from '../lib/supabase'
@@ -8,7 +8,6 @@ import Modal from '../components/shared/Modal'
 import { RoleBadge } from '../components/shared/Badge'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
-import { useEffect } from 'react'
 
 // ── Masked API key input ─────────────────────────────────────────────────────
 function SecretInput({ label, settingKey, value, onChange, placeholder }) {
@@ -50,13 +49,17 @@ function Section({ icon: Icon, title, children }) {
 }
 
 // ── User management ──────────────────────────────────────────────────────────
-function UserRow({ user, onEdit, onToggle, onReset }) {
+function UserRow({ user, currentUserId, onToggle, onDelete }) {
   const { t } = useLang()
+  const isSelf = user.id === currentUserId
   return (
     <tr className="border-b border-gray-50 dark:border-navy-800 last:border-0">
       <td className="py-3 pe-4">
         <div>
-          <p className="font-medium text-sm text-gray-800 dark:text-white">{user.full_name}</p>
+          <p className="font-medium text-sm text-gray-800 dark:text-white">
+            {user.full_name}
+            {isSelf && <span className="ms-2 text-xs text-gold-500 font-normal">(you)</span>}
+          </p>
           <p className="text-xs text-gray-400 dark:text-navy-500">{user.email}</p>
         </div>
       </td>
@@ -67,10 +70,28 @@ function UserRow({ user, onEdit, onToggle, onReset }) {
         </span>
       </td>
       <td className="py-3">
-        <div className="flex items-center gap-2">
-          <button onClick={() => onEdit(user)} className="p-1.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-500"><Edit2 size={13} /></button>
-          <button onClick={() => onToggle(user)} className={`p-1.5 rounded-lg ${user.is_active ? 'hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400' : 'hover:bg-green-50 dark:hover:bg-green-900/20 text-green-400'}`}>
+        <div className="flex items-center gap-1.5">
+          {/* Deactivate / reactivate toggle */}
+          <button
+            onClick={() => onToggle(user)}
+            disabled={isSelf || user.role === 'admin'}
+            title={user.is_active ? 'Deactivate' : 'Reactivate'}
+            className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+              user.is_active
+                ? 'hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-500'
+                : 'hover:bg-green-50 dark:hover:bg-green-900/20 text-green-400'
+            }`}
+          >
             {user.is_active ? <UserX size={13} /> : <UserCheck size={13} />}
+          </button>
+          {/* Hard delete */}
+          <button
+            onClick={() => onDelete(user)}
+            disabled={isSelf || user.role === 'admin'}
+            title="Delete permanently"
+            className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Trash2 size={13} />
           </button>
         </div>
       </td>
@@ -87,9 +108,11 @@ export default function Settings() {
 
   const [users, setUsers] = useState([])
   const [usersLoading, setUsersLoading] = useState(true)
-  const [userModal, setUserModal] = useState(null) // null | 'add' | user object
+  const [showAddModal, setShowAddModal] = useState(false)
   const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'agent', password: '' })
   const [userSaving, setUserSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null) // user object to confirm delete
+  const [deleting, setDeleting] = useState(false)
 
   // Merge loaded settings into local state
   useEffect(() => {
@@ -116,15 +139,27 @@ export default function Settings() {
     } finally { setSaving(false) }
   }
 
+  const reloadUsers = async () => {
+    const { data } = await supabase.from('profiles').select('*').order('created_at')
+    setUsers(data || [])
+  }
+
   const handleCreateUser = async () => {
+    if (!userForm.full_name.trim()) { toast.error('Full name is required'); return }
+    if (!userForm.email.trim())     { toast.error('Email is required'); return }
+    if (userForm.password.length < 6) { toast.error('Password must be at least 6 characters'); return }
     setUserSaving(true)
     try {
-      await invokeFunction('admin-create-user', userForm)
-      toast.success(t('success'))
-      setUserModal(null)
-      // Reload users
-      const { data } = await supabase.from('profiles').select('*').order('created_at')
-      setUsers(data || [])
+      await invokeFunction('admin-create-user', {
+        full_name: userForm.full_name.trim(),
+        email:     userForm.email.trim(),
+        password:  userForm.password,
+        role:      userForm.role,
+      })
+      toast.success('User created successfully')
+      setShowAddModal(false)
+      setUserForm({ full_name: '', email: '', role: 'agent', password: '' })
+      await reloadUsers()
     } catch (err) {
       toast.error(err.message || t('errors.generic'))
     } finally { setUserSaving(false) }
@@ -134,8 +169,21 @@ export default function Settings() {
     try {
       await supabase.from('profiles').update({ is_active: !user.is_active }).eq('id', user.id)
       setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !u.is_active } : u))
-      toast.success(t('success'))
+      toast.success(user.is_active ? 'User deactivated' : 'User reactivated')
     } catch { toast.error(t('errors.generic')) }
+  }
+
+  const handleDeleteUser = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await invokeFunction('admin-delete-user', { user_id: deleteTarget.id })
+      toast.success(`${deleteTarget.full_name} deleted permanently`)
+      setDeleteTarget(null)
+      await reloadUsers()
+    } catch (err) {
+      toast.error(err.message || t('errors.generic'))
+    } finally { setDeleting(false) }
   }
 
   const FREQ_OPTS = ['2h','4h','6h','12h']
@@ -239,8 +287,10 @@ export default function Settings() {
       {/* ── User management ────────────────────────────────────────────── */}
       <Section icon={Users} title={t('settings.users.title')}>
         <div className="flex justify-end">
-          <button onClick={() => { setUserForm({ full_name:'', email:'', role:'agent', password:'' }); setUserModal('add') }}
-            className="btn-navy flex items-center gap-2 text-sm">
+          <button
+            onClick={() => { setUserForm({ full_name: '', email: '', role: 'agent', password: '' }); setShowAddModal(true) }}
+            className="btn-navy flex items-center gap-2 text-sm"
+          >
             <Plus size={14} /> {t('settings.users.addUser')}
           </button>
         </div>
@@ -257,10 +307,12 @@ export default function Settings() {
               </thead>
               <tbody>
                 {users.map(u => (
-                  <UserRow key={u.id} user={u}
-                    onEdit={u => { setUserForm(u); setUserModal(u) }}
+                  <UserRow
+                    key={u.id}
+                    user={u}
+                    currentUserId={profile?.id}
                     onToggle={handleToggleUser}
-                    onReset={() => {}}
+                    onDelete={setDeleteTarget}
                   />
                 ))}
               </tbody>
@@ -269,43 +321,134 @@ export default function Settings() {
         )}
       </Section>
 
-      {/* Add/Edit user modal */}
+      {/* ── Add user modal ─────────────────────────────────────────────── */}
       <Modal
-        isOpen={!!userModal}
-        onClose={() => setUserModal(null)}
-        title={userModal === 'add' ? t('settings.users.addUser') : t('settings.users.editUser')}
+        isOpen={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        title={t('settings.users.addUser')}
         size="sm"
         footer={
           <>
-            <button onClick={() => setUserModal(null)}
-              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-navy-700 text-sm text-gray-600 hover:bg-gray-50">
+            <button onClick={() => setShowAddModal(false)}
+              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-navy-700 text-sm text-gray-600 dark:text-navy-300 hover:bg-gray-50 dark:hover:bg-navy-800">
               {t('cancel')}
             </button>
             <button onClick={handleCreateUser} disabled={userSaving} className="btn-gold text-sm px-4 py-2">
-              {userSaving ? t('loading') : t('save')}
+              {userSaving
+                ? <span className="flex items-center gap-2">
+                    <span className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Creating...
+                  </span>
+                : 'Create User'}
             </button>
           </>
         }
       >
         <div className="space-y-3">
-          {[
-            { label: t('leads.fullName'), key: 'full_name', type: 'text' },
-            { label: t('email'), key: 'email', type: 'email' },
-            { label: t('password'), key: 'password', type: 'password' },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">{f.label}</label>
-              <input type={f.type} value={userForm[f.key] || ''} onChange={e => setUserForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-                className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500" />
-            </div>
-          ))}
           <div>
-            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">{t('settings.users.role')}</label>
-            <select value={userForm.role} onChange={e => setUserForm(prev => ({ ...prev, role: e.target.value }))}
-              className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500">
-              {['agent','manager','admin'].map(r => <option key={r} value={r}>{t(`settings.users.roles.${r}`)}</option>)}
+            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">
+              {t('leads.fullName')} <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="text"
+              value={userForm.full_name}
+              onChange={e => setUserForm(p => ({ ...p, full_name: e.target.value }))}
+              placeholder="Ahmed Hassan"
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">
+              {t('email')} <span className="text-red-400">*</span>
+            </label>
+            <input
+              type="email"
+              value={userForm.email}
+              onChange={e => setUserForm(p => ({ ...p, email: e.target.value }))}
+              placeholder="ahmed@company.com"
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">
+              {t('password')} <span className="text-red-400">*</span>
+              <span className="text-gray-400 font-normal ms-1">(min 6 characters)</span>
+            </label>
+            <input
+              type="password"
+              value={userForm.password}
+              onChange={e => setUserForm(p => ({ ...p, password: e.target.value }))}
+              placeholder="••••••••"
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">
+              {t('settings.users.role')} <span className="text-red-400">*</span>
+            </label>
+            <select
+              value={userForm.role}
+              onChange={e => setUserForm(p => ({ ...p, role: e.target.value }))}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
+            >
+              <option value="agent">Agent</option>
+              <option value="manager">Manager</option>
             </select>
           </div>
+          <p className="text-xs text-gray-400 dark:text-navy-500 pt-1">
+            The user can log in immediately after creation with the email and password you set here.
+          </p>
+        </div>
+      </Modal>
+
+      {/* ── Delete confirmation modal ──────────────────────────────────── */}
+      <Modal
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title="Delete User"
+        size="sm"
+        footer={
+          <>
+            <button onClick={() => setDeleteTarget(null)}
+              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-navy-700 text-sm text-gray-600 dark:text-navy-300 hover:bg-gray-50 dark:hover:bg-navy-800">
+              Cancel
+            </button>
+            <button onClick={handleDeleteUser} disabled={deleting}
+              className="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-60">
+              {deleting
+                ? <><span className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Deleting...</>
+                : <><Trash2 size={14} /> Delete Permanently</>
+              }
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+            <AlertTriangle size={18} className="text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-red-700 dark:text-red-400">This action cannot be undone</p>
+              <p className="text-xs text-red-600 dark:text-red-500 mt-1">
+                Deleting <strong>{deleteTarget?.full_name}</strong> will:
+              </p>
+            </div>
+          </div>
+          <ul className="space-y-2 text-sm text-gray-700 dark:text-navy-200">
+            <li className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+              Remove their account from Supabase Auth (they can no longer log in)
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+              Delete their profile from the database
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+              Unassign all leads currently assigned to them
+            </li>
+          </ul>
         </div>
       </Modal>
     </div>
