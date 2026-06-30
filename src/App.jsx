@@ -16,6 +16,7 @@ import AIChat    from './pages/AIChat'
 import Reports        from './pages/Reports'
 import Settings        from './pages/Settings'
 import MarketingBrain  from './pages/MarketingBrain'
+import AccountantBrain from './pages/AccountantBrain'
 
 export default function App() {
   return (
@@ -63,6 +64,11 @@ export default function App() {
             } />
 
             {/* Protected — admin and manager only */}
+            <Route path="/accountant" element={
+              <ProtectedRoute roles={['admin','manager']}>
+                <Layout><AccountantBrain /></Layout>
+              </ProtectedRoute>
+            } />
             <Route path="/marketing" element={
               <ProtectedRoute roles={['admin','manager']}>
                 <Layout><MarketingBrain /></Layout>

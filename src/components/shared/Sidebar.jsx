@@ -1,21 +1,25 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, GitBranch, MessageSquare, Bot,
-  BarChart3, Settings, LogOut, Building2, ChevronRight, Megaphone
+  BarChart3, Settings, LogOut, Building2, ChevronRight,
+  Megaphone, Calculator
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useLang } from '../../contexts/LanguageContext'
+import { ALL_PAGES, getEffectivePageKeys } from '../../lib/pages'
 
-const NAV_ITEMS = [
-  { key: 'dashboard', to: '/dashboard', icon: LayoutDashboard, roles: ['admin','manager','agent'] },
-  { key: 'leads',     to: '/leads',     icon: Users,           roles: ['admin','manager','agent'] },
-  { key: 'pipeline',  to: '/pipeline',  icon: GitBranch,       roles: ['admin','manager','agent'] },
-  { key: 'whatsapp',  to: '/whatsapp',  icon: MessageSquare,   roles: ['admin','manager','agent'] },
-  { key: 'aiChat',    to: '/ai-chat',   icon: Bot,             roles: ['admin','manager','agent'] },
-  { key: 'marketing', to: '/marketing', icon: Megaphone,       roles: ['admin','manager'] },
-  { key: 'reports',   to: '/reports',   icon: BarChart3,       roles: ['admin','manager'] },
-  { key: 'settings',  to: '/settings',  icon: Settings,        roles: ['admin'] },
-]
+// Icon lookup — keyed by page key
+const PAGE_ICONS = {
+  dashboard:  LayoutDashboard,
+  leads:      Users,
+  pipeline:   GitBranch,
+  whatsapp:   MessageSquare,
+  aiChat:     Bot,
+  marketing:  Megaphone,
+  accountant: Calculator,
+  reports:    BarChart3,
+  settings:   Settings,
+}
 
 export default function Sidebar({ onClose }) {
   const { profile, logout } = useAuth()
@@ -27,9 +31,10 @@ export default function Sidebar({ onClose }) {
     navigate('/login')
   }
 
-  const visibleItems = NAV_ITEMS.filter(item =>
-    !profile?.role || item.roles.includes(profile.role)
-  )
+  // Admin bypasses page_access; others get their effective page list
+  const effectiveKeys = getEffectivePageKeys(profile)
+
+  const visibleItems = ALL_PAGES.filter(page => effectiveKeys.includes(page.key))
 
   return (
     <aside className="flex flex-col h-full bg-navy-900 dark:bg-navy-950 border-e border-navy-800">
@@ -46,33 +51,33 @@ export default function Sidebar({ onClose }) {
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-        {visibleItems.map(({ key, to, icon: Icon }) => (
-          <NavLink
-            key={key}
-            to={to}
-            onClick={onClose}
-            className={({ isActive }) =>
-              `group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
-                isActive
-                  ? 'bg-gradient-to-r from-gold-500/20 to-gold-600/10 text-gold-400 border border-gold-500/30'
-                  : 'text-navy-300 hover:text-white hover:bg-navy-800'
-              }`
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <Icon size={18} className={isActive ? 'text-gold-400' : 'text-navy-400 group-hover:text-white'} />
-                <span className="flex-1">{t(`nav.${key}`)}</span>
-                {isActive && (
-                  <ChevronRight
-                    size={14}
-                    className={`text-gold-400 ${isRTL ? 'rotate-180' : ''}`}
-                  />
-                )}
-              </>
-            )}
-          </NavLink>
-        ))}
+        {visibleItems.map(({ key, path }) => {
+          const Icon = PAGE_ICONS[key] || LayoutDashboard
+          return (
+            <NavLink
+              key={key}
+              to={path}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                  isActive
+                    ? 'bg-gradient-to-r from-gold-500/20 to-gold-600/10 text-gold-400 border border-gold-500/30'
+                    : 'text-navy-300 hover:text-white hover:bg-navy-800'
+                }`
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <Icon size={18} className={isActive ? 'text-gold-400' : 'text-navy-400 group-hover:text-white'} />
+                  <span className="flex-1">{t(`nav.${key}`)}</span>
+                  {isActive && (
+                    <ChevronRight size={14} className={`text-gold-400 ${isRTL ? 'rotate-180' : ''}`} />
+                  )}
+                </>
+              )}
+            </NavLink>
+          )
+        })}
       </nav>
 
       {/* User info + logout */}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Key, Clock, MessageSquare, Calendar, Users, Eye, EyeOff, Save, Plus, Trash2, UserX, UserCheck, AlertTriangle } from 'lucide-react'
+import { Key, Clock, MessageSquare, Calendar, Users, Eye, EyeOff, Save, Plus, Trash2, UserX, UserCheck, AlertTriangle, Edit2 } from 'lucide-react'
 import { useSettings } from '../hooks/useSettings'
 import { useLang } from '../contexts/LanguageContext'
 import { supabase, invokeFunction } from '../lib/supabase'
@@ -8,6 +8,7 @@ import Modal from '../components/shared/Modal'
 import { RoleBadge } from '../components/shared/Badge'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
+import { ALL_PAGES, DEFAULT_PAGE_ACCESS } from '../lib/pages'
 
 // ── Masked API key input ─────────────────────────────────────────────────────
 function SecretInput({ label, settingKey, value, onChange, placeholder }) {
@@ -49,7 +50,7 @@ function Section({ icon: Icon, title, children }) {
 }
 
 // ── User management ──────────────────────────────────────────────────────────
-function UserRow({ user, currentUserId, onToggle, onDelete }) {
+function UserRow({ user, currentUserId, onToggle, onDelete, onEdit }) {
   const { t } = useLang()
   const isSelf = user.id === currentUserId
   return (
@@ -71,6 +72,15 @@ function UserRow({ user, currentUserId, onToggle, onDelete }) {
       </td>
       <td className="py-3">
         <div className="flex items-center gap-1.5">
+          {/* Edit */}
+          <button
+            onClick={() => onEdit(user)}
+            disabled={user.role === 'admin' && !isSelf}
+            title="Edit user"
+            className="p-1.5 rounded-lg hover:bg-navy-50 dark:hover:bg-navy-700 text-navy-400 dark:text-navy-400 hover:text-navy-700 dark:hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Edit2 size={13} />
+          </button>
           {/* Deactivate / reactivate toggle */}
           <button
             onClick={() => onToggle(user)}
@@ -108,10 +118,23 @@ export default function Settings() {
 
   const [users, setUsers] = useState([])
   const [usersLoading, setUsersLoading] = useState(true)
+
+  // Add user
   const [showAddModal, setShowAddModal] = useState(false)
-  const [userForm, setUserForm] = useState({ full_name: '', email: '', role: 'agent', password: '' })
+  const [userForm, setUserForm] = useState({
+    full_name: '', email: '', role: 'agent', password: '',
+    page_access: DEFAULT_PAGE_ACCESS['agent'],
+  })
   const [userSaving, setUserSaving] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState(null) // user object to confirm delete
+
+  // Edit user
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editTarget, setEditTarget] = useState(null)
+  const [editForm, setEditForm] = useState({ full_name: '', role: 'agent', page_access: [], is_active: true })
+  const [editSaving, setEditSaving] = useState(false)
+
+  // Delete user
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
 
   // Merge loaded settings into local state
@@ -144,6 +167,44 @@ export default function Settings() {
     setUsers(data || [])
   }
 
+  const openEditModal = (user) => {
+    setEditTarget(user)
+    setEditForm({
+      full_name:   user.full_name,
+      role:        user.role,
+      page_access: user.page_access ?? DEFAULT_PAGE_ACCESS[user.role] ?? [],
+      is_active:   user.is_active,
+    })
+    setShowEditModal(true)
+  }
+
+  const handleEditUser = async () => {
+    setEditSaving(true)
+    try {
+      await invokeFunction('admin-update-user', {
+        user_id:     editTarget.id,
+        full_name:   editForm.full_name.trim(),
+        role:        editForm.role,
+        page_access: editForm.page_access,
+        is_active:   editForm.is_active,
+      })
+      toast.success('User updated successfully')
+      setShowEditModal(false)
+      await reloadUsers()
+    } catch (err) {
+      toast.error(err.message || t('errors.generic'))
+    } finally { setEditSaving(false) }
+  }
+
+  const togglePageInForm = (key, checked, formSetter) => {
+    formSetter(prev => ({
+      ...prev,
+      page_access: checked
+        ? [...(prev.page_access || []), key]
+        : (prev.page_access || []).filter(k => k !== key),
+    }))
+  }
+
   const handleCreateUser = async () => {
     if (!userForm.full_name.trim()) { toast.error('Full name is required'); return }
     if (!userForm.email.trim())     { toast.error('Email is required'); return }
@@ -151,14 +212,15 @@ export default function Settings() {
     setUserSaving(true)
     try {
       await invokeFunction('admin-create-user', {
-        full_name: userForm.full_name.trim(),
-        email:     userForm.email.trim(),
-        password:  userForm.password,
-        role:      userForm.role,
+        full_name:   userForm.full_name.trim(),
+        email:       userForm.email.trim(),
+        password:    userForm.password,
+        role:        userForm.role,
+        page_access: userForm.page_access,
       })
       toast.success('User created successfully')
       setShowAddModal(false)
-      setUserForm({ full_name: '', email: '', role: 'agent', password: '' })
+      setUserForm({ full_name: '', email: '', role: 'agent', password: '', page_access: DEFAULT_PAGE_ACCESS['agent'] })
       await reloadUsers()
     } catch (err) {
       toast.error(err.message || t('errors.generic'))
@@ -288,7 +350,7 @@ export default function Settings() {
       <Section icon={Users} title={t('settings.users.title')}>
         <div className="flex justify-end">
           <button
-            onClick={() => { setUserForm({ full_name: '', email: '', role: 'agent', password: '' }); setShowAddModal(true) }}
+            onClick={() => { setUserForm({ full_name: '', email: '', role: 'agent', password: '', page_access: DEFAULT_PAGE_ACCESS['agent'] }); setShowAddModal(true) }}
             className="btn-navy flex items-center gap-2 text-sm"
           >
             <Plus size={14} /> {t('settings.users.addUser')}
@@ -301,7 +363,7 @@ export default function Settings() {
               <thead>
                 <tr className="border-b border-gray-100 dark:border-navy-800">
                   {[t('name'), t('settings.users.role'), t('status'), t('actions')].map(h => (
-                    <th key={h} className="pb-2 text-start text-xs font-semibold text-gray-400 dark:text-navy-500 pe-4">{h}</th>
+                    <th key={h} className="pb-2 text-start text-xs font-semibold text-gray-400 dark:text-navy-500 pe-3">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -313,6 +375,7 @@ export default function Settings() {
                     currentUserId={profile?.id}
                     onToggle={handleToggleUser}
                     onDelete={setDeleteTarget}
+                    onEdit={openEditModal}
                   />
                 ))}
               </tbody>
@@ -390,16 +453,112 @@ export default function Settings() {
             </label>
             <select
               value={userForm.role}
-              onChange={e => setUserForm(p => ({ ...p, role: e.target.value }))}
+              onChange={e => setUserForm(p => ({ ...p, role: e.target.value, page_access: DEFAULT_PAGE_ACCESS[e.target.value] || [] }))}
               className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
             >
               <option value="agent">Agent</option>
               <option value="manager">Manager</option>
             </select>
           </div>
+          {/* Page access checkboxes */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-2">
+              Page Access
+            </label>
+            <div className="grid grid-cols-2 gap-1.5">
+              {ALL_PAGES.filter(p => p.key !== 'settings').map(page => {
+                const allowed = page.maxRoles.includes(userForm.role)
+                const checked = (userForm.page_access || []).includes(page.key)
+                return (
+                  <label key={page.key} className={`flex items-center gap-2 text-xs cursor-pointer select-none ${!allowed ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!allowed}
+                      onChange={e => togglePageInForm(page.key, e.target.checked, setUserForm)}
+                      className="accent-gold-500 w-3 h-3"
+                    />
+                    <span className="text-gray-700 dark:text-navy-200">{page.en}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
           <p className="text-xs text-gray-400 dark:text-navy-500 pt-1">
             The user can log in immediately after creation with the email and password you set here.
           </p>
+        </div>
+      </Modal>
+
+      {/* ── Edit user modal ────────────────────────────────────────────── */}
+      <Modal
+        isOpen={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        title={`Edit: ${editTarget?.full_name || ''}`}
+        size="sm"
+        footer={
+          <>
+            <button onClick={() => setShowEditModal(false)}
+              className="px-4 py-2 rounded-lg border border-gray-200 dark:border-navy-700 text-sm text-gray-600 dark:text-navy-300 hover:bg-gray-50 dark:hover:bg-navy-800">
+              {t('cancel')}
+            </button>
+            <button onClick={handleEditUser} disabled={editSaving} className="btn-gold text-sm px-4 py-2">
+              {editSaving
+                ? <span className="flex items-center gap-2"><span className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Saving...</span>
+                : 'Save Changes'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">Full Name</label>
+            <input type="text" value={editForm.full_name}
+              onChange={e => setEditForm(p => ({ ...p, full_name: e.target.value }))}
+              className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500" />
+          </div>
+          {editTarget?.role !== 'admin' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-1">Role</label>
+                <select value={editForm.role}
+                  onChange={e => setEditForm(p => ({
+                    ...p, role: e.target.value,
+                    page_access: p.page_access?.filter(k => {
+                      const page = ALL_PAGES.find(pg => pg.key === k)
+                      return page?.maxRoles.includes(e.target.value)
+                    }) ?? DEFAULT_PAGE_ACCESS[e.target.value] ?? [],
+                  }))}
+                  className="w-full px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500">
+                  <option value="agent">Agent</option>
+                  <option value="manager">Manager</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-navy-400 mb-2">Page Access</label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {ALL_PAGES.filter(p => p.key !== 'settings').map(page => {
+                    const allowed = page.maxRoles.includes(editForm.role)
+                    const checked = (editForm.page_access || []).includes(page.key)
+                    return (
+                      <label key={page.key} className={`flex items-center gap-2 text-xs cursor-pointer select-none ${!allowed ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                        <input type="checkbox" checked={checked} disabled={!allowed}
+                          onChange={e => togglePageInForm(page.key, e.target.checked, setEditForm)}
+                          className="accent-gold-500 w-3 h-3" />
+                        <span className="text-gray-700 dark:text-navy-200">{page.en}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <input type="checkbox" id="editActive" checked={editForm.is_active}
+              onChange={e => setEditForm(p => ({ ...p, is_active: e.target.checked }))}
+              className="accent-gold-500" />
+            <label htmlFor="editActive" className="text-sm text-gray-700 dark:text-navy-200 cursor-pointer">Active</label>
+          </div>
         </div>
       </Modal>
 

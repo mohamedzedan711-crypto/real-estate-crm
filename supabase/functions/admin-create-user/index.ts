@@ -49,7 +49,7 @@ serve(async (req) => {
 
   // ── Parse & validate body ─────────────────────────────────────────────────
   try {
-    const { full_name, email, password, role = 'agent', phone } = await req.json()
+    const { full_name, email, password, role = 'agent', phone, page_access } = await req.json()
 
     if (!full_name?.trim()) throw new Error('Full name is required')
     if (!email?.trim())     throw new Error('Email is required')
@@ -74,12 +74,13 @@ serve(async (req) => {
     const { error: profileError } = await supabaseAdmin
       .from('profiles')
       .upsert({
-        id:        userId,
-        email:     email.trim().toLowerCase(),
-        full_name: full_name.trim(),
+        id:          userId,
+        email:       email.trim().toLowerCase(),
+        full_name:   full_name.trim(),
         role,
-        phone:     phone?.trim() || null,
-        is_active: true,
+        phone:       phone?.trim() || null,
+        is_active:   true,
+        page_access: page_access ?? null,
       }, { onConflict: 'id' })
 
     if (profileError) {

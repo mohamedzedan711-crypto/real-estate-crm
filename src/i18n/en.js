@@ -61,14 +61,15 @@ const en = {
 
   // ── Navigation ───────────────────────────────────────────────────────────
   nav: {
-    dashboard: 'Dashboard',
-    leads: 'Leads',
-    pipeline: 'Pipeline',
-    whatsapp: 'WhatsApp',
-    aiChat: 'AI Assistant',
-    marketing: 'Marketing Brain',
-    reports: 'Reports',
-    settings: 'Settings',
+    dashboard:  'Dashboard',
+    leads:      'Leads',
+    pipeline:   'Pipeline',
+    whatsapp:   'WhatsApp',
+    aiChat:     'AI Assistant',
+    marketing:  'Marketing Brain',
+    accountant: 'Accountant Brain',
+    reports:    'Reports',
+    settings:   'Settings',
   },
 
   // ── Dashboard ────────────────────────────────────────────────────────────
